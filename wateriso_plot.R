@@ -1,12 +1,8 @@
 map = function(froot){
 
-  library(sp)
-  library(rgdal)
-  library(maptools)
+  library(terra)
   library(RColorBrewer)
   library(classInt)
-  library(Grid2Polygons)
-  library(raster)
     
   dbox = switch(Sys.info()["nodename"], "GJB-ZEN"="D:/Dropbox/", 
                 "HYDROGEN"="C:/Users/gjbowen/Dropbox/")
@@ -76,49 +72,48 @@ map = function(froot){
   
   for(i in 1:2){
     #read data
-    grid = readAsciiGrid(fnames[i])
-    plotvar = paste0("grid.sub$", fnames[i])
+    grid = rast(fnames[i])
     
     #set projections
     grid=setproj(grid)
     
     for(j in 1:length(shps)){
       #get current polygon layer
-      shp = readShapeSpatial(paste0(filedir, shps[j]))
+      shp = vect(paste0(filedir, shps[j]))
       shp=setproj(shp)
       
-      #make and clip raster
-      rast = raster(grid)  #this works
-      rast = crop(rast, extent(shp))
-      rast = mask(rast, shp)
-      grid.sub = as(rast, "SpatialGridDataFrame")
-      rm(rast)
+      #clip raster
+      rast.sub = crop(grid, ext(shp))
+      rast.sub = mask(rast.sub, shp)
       
       #define classes and colorspace
       nclr = 9
-      class = classIntervals(eval(parse(text=plotvar)), nclr, style = "equal", dataPrecision = 0.1)
+      class = classIntervals(as.vector(values(rast.sub, na.rm=TRUE)), nclr, style = "equal", dataPrecision = 0.1)
       plotclr = rev(brewer.pal(nclr, "YlGnBu"))
-      colcode = findColours(class, plotclr, digits=3)
       breaks = class$brks
-      pal = attr(colcode, "palette")
       rm(class)
-      rm(colcode)
       
-      #convert to spatial polygons - THIS IS A MEMORY HOG!!!
-      poly = Grid2Polygons(grid.sub, level=TRUE, at=breaks)
-      rm(grid.sub)
+      #classify raster into color bins, then convert to smoothed contour polygons
+      rcl = cbind(breaks[1:nclr], breaks[2:(nclr+1)], 1:nclr)
+      classed = classify(rast.sub, rcl, include.lowest=TRUE)
+      names(classed) = "class"
+      poly = as.polygons(classed, dissolve=TRUE)
+      rm(rast.sub, classed)
       
       #transform projection
-      poly.trans = spTransform(poly, CRS=CRS(projs[j]))
-      shp.trans = spTransform(shp, CRS=CRS(projs[j]))
+      poly.trans = project(poly, projs[j])
+      shp.trans = project(shp, projs[j])
       rm(poly)
+      
+      #map each polygon's class id back to its color
+      polyclr = plotclr[poly.trans$class]
       
       #plot
       jpeg(mnames[i,j], width=w[j], height=h[j], units="in", pointsize=10, res=1200) #need to parameterize output size
-      plot(poly.trans, border=rgb(0,0,0,max=255,alpha=20), col=plotclr)
+      plot(poly.trans, border=rgb(0,0,0,max=255,alpha=20), col=polyclr)
       plot(shp.trans, lwd=0.5, add=TRUE)
       legent = paste(rev(round(breaks[1:nclr], digits=1)), "to", rev(round(breaks[1:nclr+1], digits=1)))
-      legend(lpos.x[j], lpos.y[j], legend=legent, fill=rev(pal), box.col="white", 
+      legend(lpos.x[j], lpos.y[j], legend=legent, fill=rev(plotclr), box.col="white", 
              cex=0.75, title=leg[i])
       mtext("http://waterisotopes.org", side=1, cex=0.75, col="darkgrey")
       dev.off()
@@ -130,9 +125,9 @@ map = function(froot){
   }
 }
 
-setproj = function(spdf){
-  proj4string(spdf) = CRS("+proj=longlat +ellps=WGS84")
-  return(spdf)
+setproj = function(x){
+  crs(x) = "+proj=longlat +ellps=WGS84"
+  return(x)
 }
 
 

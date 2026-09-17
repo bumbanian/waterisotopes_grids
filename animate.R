@@ -11,20 +11,16 @@
 #####
 
 #set WGS84 projection, used throughout
-setproj = function(spdf){
-  proj4string(spdf) = CRS("+proj=longlat +ellps=WGS84")
-  return(spdf)
+setproj = function(x){
+  crs(x) = "+proj=longlat +ellps=WGS84"
+  return(x)
 }
 
 #####
 
-library(sp)
-library(rgdal)
-library(maptools)
+library(terra)
 library(RColorBrewer)
 library(classInt)
-library(Grid2Polygons)
-library(raster)
 
 dbox = switch(Sys.info()["nodename"], "GJB-ZEN"="D:/Dropbox/", 
               "HYDROGEN"="C:/Users/gjbowen/Dropbox/")
@@ -115,28 +111,24 @@ for(j in 1:7){
   high = -500   #maximum for colorscale
   
   #get current polygon layer
-  shp = readShapeSpatial(paste0(filedir, shps[j]))
+  shp = vect(paste0(filedir, shps[j]))
   shp=setproj(shp)
 
   for(i in 1:length(fnames)){
     #read data
-    grid = readAsciiGrid(fnames[i])
-    plotvar = paste0("grid.sub$", fnames[i])
+    grid = rast(fnames[i])
     
     #set projections
     grid=setproj(grid)
     
-    #make and clip raster
-    rast = raster(grid)  #this works
-    rast = crop(rast, extent(shp))
-    rast = mask(rast, shp)
-    grid.sub = as(rast, "SpatialGridDataFrame")
-    rm(rast)
-    grid.sub@grid@cellsize[1] = grid.sub@grid@cellsize[2] #force square cells if numeric fuzz
-    write.asciigrid(grid.sub, gnames[i])
-    low = min(low, min(grid.sub@data, na.rm=TRUE))
-    high = max(high, max(grid.sub@data, na.rm=TRUE))
-    rm(grid.sub)
+    #clip raster
+    rast.sub = crop(grid, ext(shp))
+    rast.sub = mask(rast.sub, shp)
+    writeRaster(rast.sub, gnames[i], filetype="AAIGrid", overwrite=TRUE)
+    rng = global(rast.sub, "range", na.rm=TRUE)
+    low = min(low, rng$min)
+    high = max(high, rng$max)
+    rm(rast.sub)
     
     rm(grid)
     gc()
@@ -151,32 +143,30 @@ for(j in 1:7){
   high = lowhigh[2,1]
   pal = rev(brewer.pal(nclr, "YlGnBu"))
   breaks = seq(low, high, (high-low)/nclr)
+  rcl = cbind(breaks[1:nclr], breaks[2:(nclr+1)], 1:nclr)
   
   for(i in 1:length(fnames)){
     #read in grid and project
-    grid.sub = read.asciigrid(gnames[i])
+    grid.sub = rast(gnames[i])
     grid.sub = setproj(grid.sub)
     
-    #find color breaks represented on map
-    gmin = min(grid.sub@data, na.rm=TRUE)
-    gmax = max(grid.sub@data, na.rm=TRUE)
-    imin = (gmin-low)/(high-low)*nclr
-    imax = (gmax-low)/(high-low)*nclr
-    imin = max(1, ceiling(imin))
-    imax = min(nclr, ceiling(imax))
-        
-    #convert to spatial polygons - THIS IS A MEMORY HOG!!!
-    poly = Grid2Polygons(grid.sub, level=TRUE, at=breaks)
-    rm(grid.sub)
+    #classify raster into color bins, then convert to smoothed contour polygons
+    classed = classify(grid.sub, rcl, include.lowest=TRUE)
+    names(classed) = "class"
+    poly = as.polygons(classed, dissolve=TRUE)
+    rm(grid.sub, classed)
     
     #transform projection
-    poly.trans = spTransform(poly, CRS=CRS(projs[j]))
-    shp.trans = spTransform(shp, CRS=CRS(projs[j]))
+    poly.trans = project(poly, projs[j])
+    shp.trans = project(shp, projs[j])
     rm(poly)
+    
+    #map each polygon's class id back to its color
+    polyclr = pal[poly.trans$class]
         
     #plot
     jpeg(mnames[i], width=w[j], height=h[j], units="in", pointsize=10, res=600) #need to parameterize output size
-    plot(poly.trans, border=rgb(0,0,0,max=255,alpha=20), col=pal[imin:imax])
+    plot(poly.trans, border=rgb(0,0,0,max=255,alpha=20), col=polyclr)
     plot(shp.trans, lwd=0.5, add=TRUE)
     legent = paste(rev(round(breaks[1:nclr], digits=1)), "to", rev(round(breaks[1:nclr+1], digits=1)))
     legend(lpos.x[j], lpos.y[j], legend=legent, fill=rev(pal), box.col="white", 
