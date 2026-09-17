@@ -4,8 +4,7 @@ map = function(froot){
   library(RColorBrewer)
   library(classInt)
     
-  dbox = switch(Sys.info()["nodename"], "GJB-ZEN"="D:/Dropbox/", 
-                "HYDROGEN"="C:/Users/gjbowen/Dropbox/")
+  dbox = "C:/Users/u0133977/Dropbox/"
   filedir = paste0(dbox, "Archived/Utilities/wateriso_plots/")
   setwd(paste0(dbox, "Archived/Utilities/IsotopeMaps/"))
 
